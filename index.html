@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Realtime Chat (WebSocket + Vue)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+  <div id="app" class="w-full max-w-3xl"></div>
+
+  <script>
+  const { createApp, ref, onMounted } = Vue;
+
+  createApp({
+    setup() {
+      const ws = ref(null);
+      const connected = ref(false);
+      const messages = ref([]);
+      const user = ref(localStorage.getItem('chat_user') || 'You');
+      const text = ref('');
+
+      function formatTime(ts) {
+        const d = new Date(ts);
+        return d.toLocaleTimeString();
+      }
+
+      function scrollToBottom() {
+        const el = document.getElementById('list');
+        if (el) el.scrollTop = el.scrollHeight;
+      }
+
+      onMounted(() => {
+        const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+        ws.value = new WebSocket(`${proto}://${location.host}`);
+
+        ws.value.addEventListener('open', () => connected.value = true);
+        ws.value.addEventListener('close', () => connected.value = false);
+        ws.value.addEventListener('error', () => connected.value = false);
+
+        ws.value.addEventListener('message', (ev) => {
+          try {
+            const data = JSON.parse(ev.data);
+            if (data.type === 'history') {
+              messages.value = data.payload || [];
+              setTimeout(scrollToBottom, 50);
+            } else if (data.type === 'message') {
+              messages.value.push(data.payload);
+              setTimeout(scrollToBottom, 20);
+            }
+          } catch (e) { console.error(e); }
+        });
+
+        window.addEventListener('beforeunload', () => {
+          if (ws.value) ws.value.close();
+        });
+      });
+
+      function sendMessage() {
+        const trimmed = (text.value || '').trim();
+        if (!trimmed || !ws.value || ws.value.readyState !== WebSocket.OPEN) return;
+        ws.value.send(JSON.stringify({ type: 'message', payload: { user: user.value, text: trimmed } }));
+        text.value = '';
+      }
+
+      function onKey(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage();
+        }
+      }
+
+      return { connected, messages, user, text, sendMessage, onKey, formatTime };
+    },
+    template: `
+      <div class="bg-white rounded-2xl shadow-lg overflow-hidden flex flex-col h-[80vh]">
+        <header class="flex items-center justify-between p-4 border-b">
+          <h1 class="text-lg font-semibold">Realtime Chat (Vue)</h1>
+          <div class="flex items-center gap-3">
+            <input v-model="user" class="border rounded px-2 py-1 text-sm" />
+            <div :class="connected ? 'text-green-600' : 'text-red-500'">{{ connected ? 'Online' : 'Offline' }}</div>
+          </div>
+        </header>
+
+        <main class="flex-1 p-4 overflow-hidden flex flex-col">
+          <div id="list" class="flex-1 overflow-auto space-y-3 pb-4">
+            <div v-for="m in messages" :key="m.id" :class="['max-w-[80%]', m.user === user ? 'ml-auto text-right' : '']">
+              <div class="inline-block px-3 py-2 rounded-xl shadow-sm" :class="m.user === user ? 'bg-blue-50' : 'bg-gray-50'">
+                <div class="text-xs text-gray-500">{{ m.user }} • {{ formatTime(m.ts) }}</div>
+                <div class="whitespace-pre-wrap break-words mt-1">{{ m.text }}</div>
+              </div>
+            </div>
+          </div>
+
+          <form class="mt-3" @submit.prevent="sendMessage">
+            <div class="flex gap-2 items-end">
+              <textarea v-model="text" @keydown="onKey" rows="2" class="flex-1 border rounded px-3 py-2 resize-none"
+                placeholder="Type a message — Enter to send, Shift+Enter for newline"></textarea>
+              <button type="submit" class="px-4 py-2 rounded-xl bg-blue-600 text-white font-semibold" :disabled="!connected">Send</button>
+            </div>
+          </form>
+        </main>
+
+        <footer class="p-3 text-xs text-gray-500 border-t">Message history kept in server memory (max 200).</footer>
+      </div>
+    `
+  }).mount('#app');
+  </script>
+</body>
+</html>
